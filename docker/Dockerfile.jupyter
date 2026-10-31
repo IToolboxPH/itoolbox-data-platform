@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.7
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 itoolbox \
+    && useradd --uid 1000 --gid itoolbox --create-home --shell /bin/bash itoolbox \
+    && mkdir -p /workspace /etc/jupyter \
+    && chown -R itoolbox:itoolbox /workspace /home/itoolbox
+
+WORKDIR /workspace
+
+COPY requirements-jupyter.txt constraints-jupyter.txt /tmp/
+RUN python -m pip install --upgrade pip==26.1.1 setuptools==82.0.1 wheel==0.47.0 \
+    && python -m pip install -r /tmp/requirements-jupyter.txt -c /tmp/constraints-jupyter.txt \
+    && python -m ipykernel install --sys-prefix --name itoolbox --display-name "IToolbox"
+
+COPY docker/jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
+COPY docker/jupyter-entrypoint.sh /usr/local/bin/jupyter-entrypoint
+RUN chmod +x /usr/local/bin/jupyter-entrypoint
+
+USER itoolbox
+
+EXPOSE 8888
+
+ENTRYPOINT ["tini", "--", "/usr/local/bin/jupyter-entrypoint"]
+CMD ["jupyter", "lab", "--config=/etc/jupyter/jupyter_server_config.py"]

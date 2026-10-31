@@ -1,0 +1,86 @@
+# itoolbox-data-platform — local data stack: TimescaleDB, JupyterLab, ingestion
+#
+# IToolbox's own database, where BantAI's data lands first and is governed locally.
+# Load data here and explore it in notebooks; register it in Zetaris
+# (../itoolbox-zetaris-platform) when the agent should be able to query it.
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up -d                          # TimescaleDB :5436, Jupyter :8890, hourly ingest
+#   docker compose up -d itoolbox-timescaledb     # TimescaleDB only
+#
+# Both ports bind to 127.0.0.1, like the rest of IToolbox. Jupyter's token is in
+# its logs (docker compose logs itoolbox-jupyter) unless JUPYTER_TOKEN is set.
+#
+# name: Docker Desktop lists the IToolbox stacks together by the "itoolbox_" prefix:
+# itoolbox_frontend, itoolbox_data-platform, itoolbox_zetaris-platform and
+# itoolbox_backend. Each repo is its own project, so
+# `docker compose down` here never touches the others. Services are named after
+# their containers.
+name: itoolbox_data-platform
+
+services:
+  itoolbox-timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: itoolbox-timescaledb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TIMESCALE_HOST_PORT:-5436}:5432"
+    environment:
+      POSTGRES_DB: "${TIMESCALE_DB:-itoolbox_db}"
+      POSTGRES_USER: "${TIMESCALE_USER:-itoolbox}"
+      POSTGRES_PASSWORD: "${TIMESCALE_PASSWORD:-itoolbox}"
+    volumes:
+      - itoolbox_tsdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-itoolbox} -d ${TIMESCALE_DB:-itoolbox_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  itoolbox-jupyter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.jupyter
+    image: itoolbox-jupyter
+    container_name: itoolbox-jupyter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${JUPYTER_PORT:-8890}:8888"
+    environment:
+      # Inside the compose network the database is `itoolbox-timescaledb`, not `localhost`.
+      TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-itoolbox}:${TIMESCALE_PASSWORD:-itoolbox}@itoolbox-timescaledb:5432/${TIMESCALE_DB:-itoolbox_db}"
+      JUPYTER_TOKEN: "${JUPYTER_TOKEN:-}"
+    volumes:
+      - ./notebooks:/workspace/notebooks
+      - ./data:/workspace/data
+      - ./scripts:/workspace/scripts
+    depends_on:
+      itoolbox-timescaledb:
+        condition: service_healthy
+
+  # Hourly OpenWeather load into the weather schema (scripts/ingest_openweather.py),
+  # which Zetaris serves to BantAI as the WEATHER data source. Same image as Jupyter.
+  # Without OPENWEATHER_API_KEY it logs that and idles.
+  itoolbox-ingest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.jupyter
+    image: itoolbox-jupyter
+    container_name: itoolbox-ingest
+    restart: unless-stopped
+    entrypoint: ["tini", "--", "python", "/workspace/scripts/ingest_openweather.py", "--every", "3600"]
+    environment:
+      TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-itoolbox}:${TIMESCALE_PASSWORD:-itoolbox}@itoolbox-timescaledb:5432/${TIMESCALE_DB:-itoolbox_db}"
+      OPENWEATHER_API_KEY: "${OPENWEATHER_API_KEY:-}"
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+    depends_on:
+      itoolbox-timescaledb:
+        condition: service_healthy
+
+volumes:
+  itoolbox_tsdata:
+    # Created under the project's first name, "itoolbox". Compose warns that it "was
+    # created for project itoolbox"; that is expected.
+    name: itoolbox_tsdata
