@@ -5,7 +5,7 @@ and international open data. Researched October 2026.
 
 Every source follows the same path: it lands in this repo's TimescaleDB first and is
 governed here, locally, then gets registered in Zetaris
-([itoolbox-zetaris-data-harness](https://github.com/IToolboxPH/itoolbox-zetaris-data-harness))
+([itoolbox-zetaris-platform](https://github.com/IToolboxPH/itoolbox-zetaris-platform))
 as one data source per Postgres schema. BantAI reads it only through Zetaris.
 
 **The short answer on PAGASA:** there is no public PAGASA developer API.

@@ -5,14 +5,14 @@
 BantAI's data lands here first and is governed here, locally, before anything moves
 to the cloud. Load data here and explore it in notebooks. When BantAI should be able
 to query it, register it as a data source in Zetaris
-([itoolbox-zetaris-data-harness](https://github.com/IToolboxPH/itoolbox-zetaris-data-harness));
+([itoolbox-zetaris-platform](https://github.com/IToolboxPH/itoolbox-zetaris-platform));
 the agent reads data only through Zetaris.
 
 | Repo | Contains |
 | --- | --- |
 | `itoolbox-backend` | FastAPI service and the BantAI agent |
 | `itoolbox-frontend` | Next.js web app |
-| `itoolbox-zetaris-data-harness` | Zetaris: query engine, catalog, API |
+| `itoolbox-zetaris-platform` | Zetaris: query engine, catalog, API |
 | **itoolbox-data-platform** (this) | TimescaleDB, JupyterLab and ingestion jobs |
 
 [DATA_SOURCES.md](DATA_SOURCES.md) lists the public data BantAI can use, from PAGASA,
