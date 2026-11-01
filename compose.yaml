@@ -19,6 +19,22 @@
 # their containers.
 name: itoolbox_data-platform
 
+# BagyoAPI (github.com/edwardguevarra/bagyo-api, MIT): PAGASA tropical cyclone
+# bulletins parsed into a REST API. Self-hosted and built from a pinned commit, so
+# none of its code lives in this repo; bump the commit to upgrade it.
+x-bagyo-build: &bagyo-build
+  context: "https://github.com/edwardguevarra/bagyo-api.git#92f509f789e4b8a22995f135e1501d7025c7c8d7"
+  dockerfile: Dockerfile
+x-bagyo-env: &bagyo-env
+  NODE_ENV: production
+  DATABASE_URL: "postgresql://bagyo:${BAGYO_DB_PASSWORD:-bagyo}@bagyo-postgres:5432/bagyo?schema=public"
+  REDIS_URL: "redis://bagyo-redis:6379"
+  APP_SECRET: "${BAGYO_APP_SECRET:?set BAGYO_APP_SECRET in .env -- see .env.example}"
+  # Sent to PAGASA with every fetch. BagyoAPI paces itself: every 10 minutes while
+  # a storm is active, every 30 otherwise, 5 s apart per host, with backoff.
+  SCRAPER_USER_AGENT: "BantAI-BagyoAPI/1.0 (IToolbox; +https://github.com/IToolboxPH)"
+  INGEST_ENABLED: "${BAGYO_LIVE_SCRAPING:-true}"
+
 services:
   itoolbox-timescaledb:
     image: timescale/timescaledb:latest-pg16
@@ -59,9 +75,10 @@ services:
       itoolbox-timescaledb:
         condition: service_healthy
 
-  # Hourly OpenWeather load into the weather schema (scripts/ingest_openweather.py),
-  # which Zetaris serves to BantAI as the WEATHER data source. Same image as Jupyter.
-  # Without OPENWEATHER_API_KEY it logs that and idles.
+  # Every ingestion job (scripts/run_ingest.py), each on its own schedule, into the
+  # schemas Zetaris serves to BantAI: weather, hazards, typhoons, reference and
+  # bulletins. Same image as Jupyter. A job that fails is logged and retried on its
+  # next turn; the others carry on.
   itoolbox-ingest:
     build:
       context: .
@@ -69,17 +86,111 @@ services:
     image: itoolbox-jupyter
     container_name: itoolbox-ingest
     restart: unless-stopped
-    entrypoint: ["tini", "--", "python", "/workspace/scripts/ingest_openweather.py", "--every", "3600"]
+    entrypoint: ["tini", "--", "python", "/workspace/scripts/run_ingest.py"]
     environment:
       TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-itoolbox}:${TIMESCALE_PASSWORD:-itoolbox}@itoolbox-timescaledb:5432/${TIMESCALE_DB:-itoolbox_db}"
       OPENWEATHER_API_KEY: "${OPENWEATHER_API_KEY:-}"
+      BAGYO_API_URL: "http://bagyo-api:3000"
     volumes:
       - ./scripts:/workspace/scripts:ro
     depends_on:
       itoolbox-timescaledb:
         condition: service_healthy
 
+  # ── BagyoAPI ──────────────────────────────────────────────────────────────
+  # Its own Postgres and Redis, reachable only inside this compose network. The
+  # API is published on loopback for its /docs; the ingest job reads it from
+  # inside the network. The seed loads six real 2026 PAGASA bulletins and a demo
+  # account (demo@bagyo-api.local); keep the API off any shared network.
+  bagyo-postgres:
+    image: postgres:16-alpine
+    container_name: bagyo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bagyo
+      POSTGRES_PASSWORD: "${BAGYO_DB_PASSWORD:-bagyo}"
+      POSTGRES_DB: bagyo
+    volumes:
+      - itoolbox_bagyo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bagyo -d bagyo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bagyo-redis:
+    image: redis:7-alpine
+    container_name: bagyo-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bagyo-migrate:
+    build:
+      <<: *bagyo-build
+      target: migrate
+    image: bagyo-api-migrate:92f509f
+    container_name: bagyo-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://bagyo:${BAGYO_DB_PASSWORD:-bagyo}@bagyo-postgres:5432/bagyo?schema=public"
+    depends_on:
+      bagyo-postgres:
+        condition: service_healthy
+
+  bagyo-seed:
+    build:
+      <<: *bagyo-build
+      target: migrate
+    image: bagyo-api-migrate:92f509f
+    container_name: bagyo-seed
+    restart: "no"
+    command: ["node", "apps/worker/dist/seed.js"]
+    environment:
+      DATABASE_URL: "postgresql://bagyo:${BAGYO_DB_PASSWORD:-bagyo}@bagyo-postgres:5432/bagyo?schema=public"
+    depends_on:
+      bagyo-migrate:
+        condition: service_completed_successfully
+
+  bagyo-api:
+    build:
+      <<: *bagyo-build
+      target: api
+    image: bagyo-api:92f509f
+    container_name: bagyo-api
+    restart: unless-stopped
+    environment:
+      <<: *bagyo-env
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+    ports:
+      - "127.0.0.1:${BAGYO_API_PORT:-3200}:3000"
+    depends_on:
+      bagyo-migrate:
+        condition: service_completed_successfully
+      bagyo-redis:
+        condition: service_healthy
+
+  bagyo-worker:
+    build:
+      <<: *bagyo-build
+      target: worker
+    image: bagyo-api-worker:92f509f
+    container_name: bagyo-worker
+    restart: unless-stopped
+    environment: *bagyo-env
+    depends_on:
+      bagyo-migrate:
+        condition: service_completed_successfully
+      bagyo-redis:
+        condition: service_healthy
+
 volumes:
+  itoolbox_bagyo_pgdata:
+    name: itoolbox_bagyo_pgdata
   itoolbox_tsdata:
     # Created under the project's first name, "itoolbox". Compose warns that it "was
     # created for project itoolbox"; that is expected.

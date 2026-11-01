@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS weather.locations (
     lon          double precision NOT NULL,
     updated_at   timestamptz NOT NULL DEFAULT now()
 );
+-- PSA's 9-digit PSGC code: joins to reference.cities_municipalities and to the
+-- locations in bulletins.signals.
+ALTER TABLE weather.locations ADD COLUMN IF NOT EXISTS psgc_code text;
 
 -- Current weather, one row per location per OpenWeather observation time. OpenWeather
 -- refreshes about every 10 minutes; the job polls hourly.
@@ -67,6 +70,22 @@ CREATE TABLE IF NOT EXISTS weather.forecasts (
     PRIMARY KEY (location_id, forecast_for)
 );
 SELECT create_hypertable('weather.forecasts', 'forecast_for', if_not_exists => TRUE);
+
+-- Daily weather history per city since 1991, from NASA POWER (satellite and
+-- reanalysis estimates for the city's grid cell, not a station; NASA open data).
+-- Days are local solar days. A regular table: it is small and read by city.
+CREATE TABLE IF NOT EXISTS weather.daily_history (
+    location_id   text NOT NULL REFERENCES weather.locations,
+    day           date NOT NULL,
+    rain_mm       real,                         -- precipitation, bias-corrected
+    temp_mean_c   real,
+    temp_max_c    real,
+    temp_min_c    real,
+    humidity_pct  real,
+    wind_mean_ms  real,                         -- at 10 m
+    wind_max_ms   real,
+    PRIMARY KEY (location_id, day)
+);
 
 -- Air pollution, one row per location per observation. aqi is OpenWeather's index:
 -- 1 good, 2 fair, 3 moderate, 4 poor, 5 very poor. Concentrations in µg/m³.

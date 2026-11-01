@@ -16,13 +16,21 @@ as one data source per Postgres schema. BantAI reads it only through Zetaris.
 - **History without paperwork:** NOAA's GSOD carries PAGASA's synoptic stations. Commercial redistribution is restricted (see below).
 - **Typhoon history** is fully open through IBTrACS.
 
-## In use
+## In use (November 2026)
+
+Everything in "Open now" below except Copernicus ERA5 (it needs a free account),
+plus PAGASA's bulletins through a self-hosted BagyoAPI. See the README's Data
+section for the tables and schedules.
 
 | Zetaris source | Data | From | Refresh |
 | --- | --- | --- | --- |
-| `WEATHER` | Current weather, 5-day/3-hour forecast and air quality for 24 cities, at least one per region and more in the typhoon belt | OpenWeather free APIs, through `itoolbox-ingest` | Hourly |
+| `WEATHER` | Current weather, 5-day/3-hour forecast and air quality for 24 cities, at least one per region and more in the typhoon belt; daily history since 1991 | OpenWeather free APIs; NASA POWER | Hourly; daily |
+| `BULLETINS` | PAGASA tropical cyclone bulletins, wind signals by PSGC area, rainfall advisories | PAGASA, parsed by self-hosted BagyoAPI | Every 30 min |
+| `HAZARDS` | Earthquakes M3+ since 2000; GDACS alerts since 2015; NOAH flood, landslide and storm surge around each city | USGS; GDACS; Project NOAH vector tiles | Hourly; hourly; yearly |
+| `TYPHOONS` | Every storm inside PAR since 1951, its track, and its closest pass to each city | IBTrACS | Weekly |
+| `REFERENCE` | PSGC places, province population 2022 to 2025, facilities near each city | PSA via psgc.gitlab.io and HDX; OpenStreetMap | Monthly |
 
-The tables are in [scripts/sql/weather.sql](scripts/sql/weather.sql).
+The tables are in [scripts/sql/](scripts/sql/).
 
 **OpenWeather's key works** for the free APIs: current weather, the 5-day forecast, air pollution and geocoding. One Call 3.0 and 4.0 return 401 until the account subscribes to **One Call by Call**:
 
@@ -76,15 +84,11 @@ The tables are in [scripts/sql/weather.sql](scripts/sql/weather.sql).
 
 ## Recommended order
 
-1. **Done: `WEATHER`.**
+1. **Done (November 2026):** `WEATHER`, `BULLETINS`, `HAZARDS`, `TYPHOONS` and `REFERENCE`, as above.
 2. **Next, no approvals needed:**
-   - A `hazards` schema: USGS earthquakes and GDACS alerts, for timely information.
-   - A `reference` schema: PSGC codes and HDX population, so BantAI can say who is affected.
-   - A `typhoons` schema: IBTrACS tracks inside PAR, so BantAI can say how often a place gets hit.
-3. **Then:**
-   - NOAH hazard per city, precomputed.
-   - PAGASA bulletins through a self-hosted BagyoAPI, as `bulletins`.
-4. **Start the paperwork now, since it is slow:**
+   - More cities, or sites (a client's branches), in `scripts/ingest/cities.py`: every job follows the list.
+   - Copernicus ERA5 for hourly history, once someone registers the free CDS account.
+3. **Start the paperwork now, since it is slow:**
    - The PAGASA CAD request for station history. State the commercial purpose plainly and budget for the fees.
    - A ReliefWeb `appname`.
    - PhilSensors access through a partner LGU or state university.

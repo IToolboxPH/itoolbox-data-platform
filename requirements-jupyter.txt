@@ -16,3 +16,6 @@ requests==2.32.3
 python-dotenv==1.0.1
 tqdm==4.66.5
 paramiko==3.5.0
+pmtiles==3.8.1
+mapbox-vector-tile==2.2.0
+shapely==2.2.0
